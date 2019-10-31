@@ -1,67 +1,38 @@
 from abc import abstractmethod
 import numpy as np
-import agent
-
-class Asset:
-	''' Define a set of assets in an auction game '''
-
-	def __init__(self, price=0., N=1):
-		if type(price) is not 'array':			# Set production cost
-			self.price = price*np.ones(N).astype('float')
-		else:
-			self.price = price.astype('float')
-		self.owner = np.zeros(N).astype('int')		# Name of the owner of each assets
-
-	def set_owner(self, name, i=None):
-		if i is None:
-			self.owner = name
-		else:
-			self.owner[i] = name
-	
-	def edit_price(self, price, i=None):
-		if i is None:		# Price of the asset after a deal between two agent
-			self.price = price
-		else:
-			self.price[i] = price
+import agent as ag
 
 class Market:
 	''' Market for a double auction game '''
 
-	def __init__(self, N_buyers=1, N_sellers=1, budget=0., price=0.):
-		self.buyers = agent.Buyer(budget, N_buyers)	# Set of buyers
-		self.sellers = agent.Seller(budget, N_sellers)	# Set of sellers
-		self.assets = Asset(price, N_sellers)		# Set of assets
-		self.name = np.linspace(1, N_buyers+N_sellers, N_buyers+N_sellers).astype('int')	# name of each agent (Buyers: 1 to N_buyers, Sellers: N_buyers to N_buyers+N_sellers)
-
-		self.sellers.new_product(self.assets.price)	# The sellers produced their assets
-		self.assets.set_owner(self.name[N_buyers:])	# Set the owner of eacha assets
+	def __init__(self, budget, N_agent, assets):
+		self.agents = ag.Agent(budget, N_agent)
+		self.assets = assets
+		self.agents.produce(self.assets)
 
 	@abstractmethod
 	def deal_price(self, selling_price, buying_price): pass	# Deal price when a matching happens
-
-	def exchange(self, b,s):		# After deal the buyer become seller and respectively
-		buyer_profit = self.buyers.profit[b]
-		self.buyers.edit_agent(self.sellers.profit[s], b)
-		self.sellers.edit_agent(buyer_profit, s)
-		buyer_name = self.name[b]
-		S = s+len(self.buyers.profit)
-		self.name[b] = self.name[S]		# The buyer become seller
-		self.name[S] = buyer_name	# The seller become buyer
-		self.assets.set_owner(self.name[S], s)	# Set the new owner of the asset
+	@abstractmethod
+	def update_price(self, deal_prices): pass		# New price of the asset
 
 	def matching_mechanisme(self):
-		for s in range(len(self.sellers.profit)):
-			B_s = np.where(self.buyers.buy_to==s)[0]	# Index of buyers interested by the asset s
-			if len(B_s)>0:
-				b_s = np.where(self.buyers.ask_price[B_s]>=self.sellers.ask_price[s])[0]	# Index of buyers that cover what the seller ask
-				if len(b_s)>0:
-					b = np.argmin(self.buyers.ask_price[B_s[b_s]])
-					b = B_s[b_s[b]]		# Index of the buyer that match with the seller of asset s
-					deal = self.deal_price(self.sellers.ask_price[s], self.buyers.ask_price[b])	# Deal price
-					self.sellers.action(deal, s)	# Edit the seller profit after the sale 
-					self.buyers.action(deal, b)	# Edit the buyer profit after the purchase
-					self.assets.edit_price(deal, s)	# Edit the price of the asset
-					self.exchange(b,s)		# Transform the seller into a buyer and the buyer into a seller
+		for asset in range(self.assets.N_asset):	# For each assets
+			buyers = np.where(self.agents.bid_on[:,asset]>0)[0]	# Set of buyers
+			sellers = np.where(self.agents.bid_on[:,asset]<0)[0]	# Set of sellers
+			dif = self.agents.ask_price[buyers,asset].reshape(-1,1)-self.agents.ask_price[sellers,asset].reshape(-1,1).T				# Table of price differences
+			possible_match = np.where(dif>=0)	# Set ofpotential match
+			new_price = []				# Deal price for each match
+			while len(dif[possible_match])>0:
+				match = np.argmin(dif[possible_match])		# match index
+				buyer = buyers[possible_match[0][match]]	# buyer index
+				seller = sellers[possible_match[1][match]]	# Seller index
+				new_price.append(self.deal_price(self.agents.ask_price[seller,asset], self.agents.ask_price[seller,asset]))	# New price
+				self.agents.deal(new_price[-1], buyer, seller, asset)	# make a deal
+				self.assets.owner[asset] = np.where(self.assets.owner[asset]==seller, buyer, self.assets.owner[asset])	# edit the owner of the asset
+				erase = list(set(np.concatenate((np.where(possible_match[0]==possible_match[0][match])[0], np.where(possible_match[1]==possible_match[1][match])[0]))))
+				possible_match = (np.delete(possible_match[0], erase), np.delete(possible_match[1], erase))	# Erase the buyer and the seller of the list of potential match
+			if len(new_price)>0:	# Edit the new price of the asset
+				self.assets.price[asset] = self.update_price(new_price)
 
 class Market_mdp(Market):
 	''' Market using a mean deal price '''
@@ -69,36 +40,56 @@ class Market_mdp(Market):
 	def deal_price(self, selling_price, buying_price):
 		return (buying_price+selling_price)*0.5		# Mean deal price
 
+	def update_price(self, deal_price):
+		return float(sum(deal_price))/len(deal_price)	# Mean value of all the deal prices
+
 #########################################################################
 ''' Test a market '''
 
-def test(N_b, N_s):
-	market = Market_mdp(N_b, N_s, 100., 100.*np.random.rand(N_s))
-	market.buyers.bid_on(100.*np.random.rand(N_b), np.random.randint(0, N_s, size=N_b))
-	market.sellers.set_ask_price(100.*np.random.rand(N_s))
-	print 'Buyers : '
-	print np.stack((market.name[:N_b], market.buyers.profit, market.buyers.buy_to+N_b+1, market.buyers.ask_price))
+def test(N_agent, N_asset, prices):
+	assets = ag.Asset(prices, N_asset)
+	market = Market_mdp(100., N_agent, assets)
+	for agent in range(N_agent):
+		for asset in range(market.assets.N_asset):
+			if market.agents.own[agent, asset]>0:
+				market.agents.bid_on[agent, asset] = -1
+				market.agents.ask_price[agent, asset] = 100.*np.random.rand()
+			else:
+				market.agents.bid_on[agent, asset] = np.random.randint(0,2)
+				if market.agents.bid_on[agent, asset] == 1:
+					market.agents.ask_price[agent, asset] = 100.*np.random.rand()
+
+	print 'Asset'
+	print 'Prices : ', market.assets.price
+	print 'Owner : ', market.assets.owner
 	print
-	print'Sellers : '
-	print np.stack((market.name[N_b:], market.sellers.profit, market.sellers.ask_price))
-	print
-	print 'Assets : '
-	print np.stack((market.assets.owner, market.assets.price))
-	print
+	print 'Agent'
+	print 'Budget : ', market.agents.budget
+	print 'Own : '
+	print market.agents.own
+	print 'bid_on : '
+	print market.agents.bid_on
+	print 'Ask prices : '
+	print market.agents.ask_price
 	print
 
 	market.matching_mechanisme()
-	print 'Buyers : '
-	print np.stack((market.name[:N_b], market.buyers.profit))
+
+	print 'Asset'
+	print 'Prices : ', market.assets.price
+	print 'Owner : ', market.assets.owner
 	print
-	print'Sellers : '
-	print np.stack((market.name[N_s:], market.sellers.profit))
-	print
-	print 'Assets : '
-	print np.stack((market.assets.owner, market.assets.price))
+	print 'Agent'
+	print 'Budget : ', market.agents.budget
+	print 'Own : '
+	print market.agents.own
+	print 'bid_on : '
+	print market.agents.bid_on
+	print 'Ask prices : '
+	print market.agents.ask_price
 	print
 
-test(3,3)
+#test(10, [2,3], np.array([10., 35.]))
 
 
 

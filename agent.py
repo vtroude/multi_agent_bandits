@@ -1,58 +1,101 @@
 import numpy as np
-from abc import abstractmethod
+
+class Asset:
+	''' Define a set of assets in an auction game '''
+
+	def __init__(self, price=0., N=[1]):
+		self.N_asset = len(N)			# Number of assets
+		self.owner = []				# List of owner of the assets
+		for n in range(self.N_asset):
+			self.owner.append(np.zeros(N[n]).astype('int'))
+		self.price = price*np.ones(self.N_asset)	# Production cost of the assets
 
 class Agent:
 	''' Define a set of agents in a double auction game '''
 
 	def __init__(self, budget=0., N=1):
 		if type(budget) is not 'array':
-			self.profit = budget*np.ones(N).astype('float')
+			self.budget = budget*np.ones(N).astype('float')
 		else:
-			self.profit = budget.astype('float')
-		self.ask_price = np.zeros(N).astype('float')
+			self.budget = budget.astype('float')
+		self.N_agent = N
+		
+	def produce(self, asset):
+		self.own = np.zeros((self.N_agent, asset.N_asset)).astype('int')
+		self.ask_price = np.zeros((self.N_agent, asset.N_asset)).astype('float')
+		self.bid_on = np.zeros((self.N_agent, asset.N_asset)).astype('float')
+		n = 0
+		for i in range(asset.N_asset):
+			for j in range(len(asset.owner[i])):
+				self.budget[n+j] = self.budget[n+j]-asset.price[i]
+				self.own[n+j,i] = 1
+				asset.owner[i][j] = n+j
+			n = n + len(asset.owner[i])
 
-	@abstractmethod
-	def action(self, price, i=None): pass		# Buy/Sell if it is a buyer or a seller
+	def deal(self, deal_price, buyer, seller, asset_i):
+		self.budget[buyer] = self.budget[buyer]-deal_price
+		self.budget[seller] = self.budget[seller]+deal_price
+		self.own[buyer, asset_i] = 1
+		self.own[seller, asset_i] = 0
+		self.bid_on[[buyer,seller],asset_i] = 0
+		self.ask_price[[buyer,seller],asset_i] = 0.
 
-	def set_ask_price(self, price, i=None):
-		if i is None:
-			self.ask_price = price
-		else:
-			self.ask_price[i] = price[i]
-	
-	def edit_agent(self, new_agent_profit, i):	# Change the agent i
-		self.profit[i] = new_agent_profit
-		self.ask_price[i] = 0.
+####################################################################"
+''' Test asset & agent '''
 
-class Seller(Agent):
-	''' Define a set of sellers who sell a single unit of a product '''
+def test():
+	asset = Asset(np.array([10., 13.]), [2, 3])
+	print 'Assets'
+	print 'N -> ', asset.N_asset
+	print 'Price -> ', asset.price
+	print
+	agent = Agent(100., 10)
+	print 'Agent'
+	print 'Budget -> ', agent.budget
+	print
+	agent.produce(asset)
+	print 'Book'
+	print agent.own
+	print 'Budget -> ', agent.budget
+	print 'Owned -> ', asset.owner
+	print
+	agent.deal(12., 9, 0, 0)
+	asset.price[0] = 12.
+	asset.owner[0] = np.where(asset.owner[0]==0, 9, asset.owner[0])
+	print 'Deal'
+	print 'Budget -> ', agent.budget
+	print agent.own
+	print 'Owned -> ', asset.owner
+	print 'Price -> ', asset.price
 
-	def action(self, price, i=None):		# Sell
-		if i is None:
-			self.profit = self.profit + price
-		else:
-			self.profit[i] = self.profit[i] + price
 
-	def new_product(self, production_cost, i=None):	# Take possesion of an asset
-		if i is None:
-			self.profit = self.profit - production_cost
-		else:
-			self.profit[i] = self.profit[i] - production_cost
+#test()
 
-class Buyer(Agent):
-	''' Define a set f buyers who buy a single unit of a product '''
 
-	def action(self, price, i=None):		# Buy
-		if i is None:
-			self.profit = self.profit - price
-		else:
-			self.profit[i] = self.profit[i] - price
 
-	def bid_on(self, ask_price, Index, i=None):		# Bid on the assets represented by the Index
-		self.set_ask_price(ask_price, i)
-		if i is None:
-			self.buy_to = Index.astype('int')
-		else:
-			self.buy_to = int(Index)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
